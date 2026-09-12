@@ -1,0 +1,31 @@
+# Auto-detect text files and normalize line endings to LF in the repo
+* text=auto
+
+# Explicitly declare source files as LF (so repo stays portable)
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.svg   text eol=lf
+
+# Windows-native scripts keep CRLF so they run correctly on Windows
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary files should not be touched at all
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+
+# Lock files — never touch, avoids churn on dependency updates
+package-lock.json  -text

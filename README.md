@@ -66,13 +66,13 @@ DRISHTI connects **Citizens**, **Ambulance Drivers**, and **Traffic Police / Con
 - **Node.js** v18 or higher — [Download](https://nodejs.org/)
 - **npm** (comes with Node.js) or **yarn** / **pnpm**
 - **Git** — [Download](https://git-scm.com/)
-
+  
 ### Installation
-
+  **Open any Terminal Such as Command Prompt/Powershell/Linux etc** 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
-   cd YOUR-REPO
+   git clone https://github.com/Sree-2007/Webv3.git
+   cd Webv3
    ```
 
 2. **Install dependencies**

@@ -36,12 +36,6 @@ DRISHTI connects **Citizens**, **Ambulance Drivers**, and **Traffic Police / Con
 - **SOS Emergency Log** — Every past SOS is logged with location, timestamp, and a "focus on map" button
 - **AI Trust Badge** — See every citizen photo with its AI trust score; click to enlarge full-screen
 
-### ⚙️ Cross-Cutting Features
-- **Real-time Cross-Tab Sync** — All changes propagate across browser tabs via `localStorage` storage events
-- **Auto-Expiring SOS Alerts** — SOS signals expire after 22 seconds automatically
-- **Persistent State** — Reports, signals, users, and SOS history survive page reloads
-- **Dark Mode UI** — Glassmorphic design with amber/cyan accents throughout
-
 ---
 
 ## 🛠️ Tech Stack

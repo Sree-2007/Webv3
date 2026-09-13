@@ -1,12 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../App';
 import { GlassButton } from '@/components/ui/glass-button';
 import { HelpPopper } from '@/components/ui/help-popper';
 import {
   AlertTriangle, Navigation, Upload, ShieldAlert, LogOut, MapPin,
-  CheckCircle2, MousePointerClick, Ambulance, X, Camera, Trash2, XCircle,
+  CheckCircle2, MousePointerClick, Ambulance, X, Camera, Trash2, Sparkles, Award,
+  XCircle,
 } from 'lucide-react';
-import { HazardType, computeAiTrust, haversineKm } from '../types';
+import { HazardType, computeAiTrust } from '../types';
 import { BengaluruMap, LOCATIONS, LocationKey } from '@/components/BengaluruMap';
 
 const START_POSITIONS: Record<string, { lat: number; lng: number; label: string }> = {
@@ -19,7 +20,7 @@ const DEFAULT_POS = { lat: 12.9063, lng: 77.5857, label: 'Your Location' };
 
 export const CitizenDashboard: React.FC = () => {
   const {
-    currentUser, reports, addReport, sosActive, triggerSOS, cancelSOS, signals, logout, sosAlert,
+    currentUser, users, reports, addReport, sosActive, triggerSOS, cancelSOS, signals, logout, sosAlert,
   } = useApp();
   const [showReportModal, setShowReportModal] = useState(false);
   const [destination, setDestination] = useState<LocationKey | null>(null);
@@ -32,20 +33,35 @@ export const CitizenDashboard: React.FC = () => {
   const [photoName, setPhotoName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /** Live-read credit points from the users array so we get updates from other tabs. */
+  const myUser = users.find(u => u.username === currentUser?.username);
+  const creditPoints = myUser?.creditPoints ?? 0;
+
+  /** Track previous credits to show a floating +15 / -10 badge.
+   *  Starts as null so we skip the initial mount and only animate real changes. */
+  const prevCreditsRef = useRef<number | null>(null);
+  const [creditDelta, setCreditDelta] = useState<{ delta: number; key: number } | null>(null);
+
+  useEffect(() => {
+    if (prevCreditsRef.current === null) {
+      prevCreditsRef.current = creditPoints;
+      return;
+    }
+    if (prevCreditsRef.current !== creditPoints) {
+      const delta = creditPoints - prevCreditsRef.current;
+      prevCreditsRef.current = creditPoints;
+      setCreditDelta({ delta, key: Date.now() });
+      const t = setTimeout(() => setCreditDelta(null), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [creditPoints]);
+
   const isAmbulance = currentUser?.vehicleType === 'Ambulance';
   const userPos = START_POSITIONS[currentUser?.vehicleType || ''] || DEFAULT_POS;
 
   const visibleReports = reports.filter(r =>
     r.reportedBy === currentUser?.username || r.status === 'verified'
   );
-
-  // Is the currently active SOS raised by me?
-  const isMySOS = !!(sosAlert && sosAlert.ambulanceUser === currentUser?.username);
-  // Show "Ambulance nearby" toast to everyone EXCEPT the reporting ambulance
-  const showSOSToast = !!(sosAlert && sosAlert.ambulanceUser !== currentUser?.username);
-  // Distance from me to the ambulance (in km)
-  const sosDistanceKm = sosAlert ? haversineKm(userPos, sosAlert) : 0;
-  const sosEtaMin = Math.max(1, Math.round((sosDistanceKm / 30) * 60)); // assumes 30 km/h avg speed
 
   const openReportModal = () => {
     setPickedPin({ lat: userPos.lat, lng: userPos.lng });
@@ -101,9 +117,10 @@ export const CitizenDashboard: React.FC = () => {
       reportedBy: currentUser?.username,
       image: photoDataUrl,
       aiTrust: trust,
+      reportedAt: Date.now(),
     });
     closeReportModal();
-    setToast(`Report sent to Control Panel · AI Trust ${trust}%`);
+    setToast(`Report sent · AI Trust ${trust}% · Awaiting verification`);
     setTimeout(() => setToast(null), 4500);
   };
 
@@ -116,6 +133,7 @@ export const CitizenDashboard: React.FC = () => {
     );
   };
 
+  /** Cancel the currently active SOS raised by this ambulance. */
   const handleCancelSOS = () => {
     if (currentUser?.username) {
       cancelSOS(currentUser.username);
@@ -124,7 +142,18 @@ export const CitizenDashboard: React.FC = () => {
     }
   };
 
+  /** True when the currently active SOS belongs to this ambulance. */
+  const isMySOS = !!(sosAlert && sosAlert.ambulanceUser === currentUser?.username);
+
+  const showSOSToast = sosAlert && sosAlert.ambulanceUser !== currentUser?.username;
   const canSubmit = pickedPin && photoDataUrl;
+
+  /* Credit badge color based on tier */
+  const creditTier =
+    creditPoints >= 200 ? { ring: 'ring-yellow-400/60', bg: 'bg-gradient-to-r from-yellow-500/25 to-amber-500/20', text: 'text-yellow-200', label: 'Gold' } :
+    creditPoints >= 100 ? { ring: 'ring-cyan-400/60', bg: 'bg-gradient-to-r from-cyan-500/25 to-blue-500/20', text: 'text-cyan-200', label: 'Silver' } :
+    creditPoints >= 40  ? { ring: 'ring-emerald-400/60', bg: 'bg-gradient-to-r from-emerald-500/25 to-teal-500/20', text: 'text-emerald-200', label: 'Bronze' } :
+                          { ring: 'ring-slate-500/60', bg: 'bg-slate-800/80', text: 'text-slate-200', label: 'Starter' };
 
   return (
     <div className="min-h-screen flex flex-col p-6 max-w-[1600px] mx-auto">
@@ -140,7 +169,43 @@ export const CitizenDashboard: React.FC = () => {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* ═══════ CREDIT POINTS PILL ═══════ */}
+          <div
+            className={`relative flex items-center gap-2.5 px-4 py-2.5 rounded-2xl ring-2 ${creditTier.ring} ${creditTier.bg} backdrop-blur-md shadow-lg transition-all`}
+            title={`${creditTier.label} tier · Earn +15 credits per verified report, lose 10 for misleading reports`}
+          >
+            <div className="w-8 h-8 rounded-xl bg-black/30 flex items-center justify-center">
+              <Award className={`w-4 h-4 ${creditTier.text}`} />
+            </div>
+            <div className="flex flex-col leading-none">
+              <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
+                Your Credits
+              </span>
+              <span className={`text-lg font-bold ${creditTier.text} tabular-nums`}>
+                {creditPoints}
+              </span>
+            </div>
+            <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold hidden sm:block ml-1">
+              · {creditTier.label}
+            </span>
+
+            {/* Floating ±delta badge when credits change */}
+            {creditDelta && (
+              <span
+                key={creditDelta.key}
+                className={`absolute -top-2 -right-2 px-2 py-0.5 rounded-full text-[11px] font-bold shadow-lg animate-credit-pop ${
+                  creditDelta.delta > 0
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-red-500 text-white'
+                }`}
+              >
+                {creditDelta.delta > 0 ? `+${creditDelta.delta}` : creditDelta.delta}
+              </span>
+            )}
+          </div>
+
           {isAmbulance && !isMySOS && (
             <button onClick={handleSOS}
               className="flex items-center gap-3 px-6 py-3 rounded-2xl font-bold transition-all bg-red-500/20 text-red-400 border-2 border-red-500/50 hover:bg-red-500/30">
@@ -148,6 +213,7 @@ export const CitizenDashboard: React.FC = () => {
               EMERGENCY SOS
             </button>
           )}
+
           {isAmbulance && isMySOS && (
             <button onClick={handleCancelSOS}
               className="flex items-center gap-3 px-6 py-3 rounded-2xl font-bold transition-all bg-red-500 text-white animate-pulse shadow-[0_0_30px_rgba(239,68,68,0.8)] hover:bg-red-400">
@@ -155,14 +221,26 @@ export const CitizenDashboard: React.FC = () => {
               CANCEL SOS
             </button>
           )}
+
           <GlassButton size="default" onClick={openReportModal}>
             <div className="flex items-center gap-2 px-2"><AlertTriangle className="w-5 h-5" /> Report</div>
           </GlassButton>
+
           <button onClick={logout} className="p-3 rounded-xl border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900 transition-colors">
             <LogOut className="w-5 h-5" />
           </button>
         </div>
       </header>
+
+      {/* ─── Reward banner: brief explainer under header ─── */}
+      <div className="mb-4 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500/5 via-transparent to-transparent border border-cyan-500/15">
+        <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+        <p className="text-xs text-slate-400">
+          <span className="font-bold text-cyan-300">+15 credits</span> per verified report &nbsp;·&nbsp;
+          <span className="font-bold text-red-400">−10 credits</span> for misleading reports &nbsp;·&nbsp;
+          Earn rewards by keeping roads safer.
+        </p>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1">
         <div className="space-y-6">
@@ -225,8 +303,15 @@ export const CitizenDashboard: React.FC = () => {
                             : report.status === 'rejected' ? 'bg-slate-800 text-slate-400'
                             : 'bg-amber-500/20 text-amber-400'
                         }`}>{report.status}</span>
-                        {report.reportedBy && !isMine && (
-                          <span className="text-[10px] text-slate-500 font-mono">@{report.reportedBy}</span>
+                        {isMine && report.status === 'verified' && (
+                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                            <Award className="w-3 h-3" /> +15
+                          </span>
+                        )}
+                        {isMine && report.status === 'rejected' && (
+                          <span className="text-[10px] font-bold text-red-400 flex items-center gap-1">
+                            <Award className="w-3 h-3" /> −10
+                          </span>
                         )}
                       </div>
                     </div>
@@ -258,6 +343,7 @@ export const CitizenDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Help button */}
       <div className="fixed bottom-6 left-6 z-[500]">
         <HelpPopper
           side="top"
@@ -266,6 +352,7 @@ export const CitizenDashboard: React.FC = () => {
             { label: 'How to report a hazard', onSelect: () => setShowReportModal(true) },
             { label: 'How reroute works' },
             { label: 'Emergency SOS guide' },
+            { label: 'How credits work', onSelect: () => setToast('+15 per verified · −10 for misleading') },
           ]}
           sections={[
             {
@@ -291,32 +378,6 @@ export const CitizenDashboard: React.FC = () => {
                 <strong>{sosAlert!.ambulanceNo}</strong> is responding to an emergency in your area.
                 Please pull over and give way.
               </p>
-              <div className="mt-2 pt-2 border-t border-white/20 flex items-center justify-between text-[11px]">
-                <span className="font-bold text-white">
-                  Ambulance is <span className="text-yellow-200">{sosDistanceKm.toFixed(1)} km</span> from you
-                </span>
-                <span className="text-white/70">~{sosEtaMin} min away</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isMySOS && (
-        <div className="fixed top-6 right-6 z-[1500] max-w-sm bg-gradient-to-br from-red-600 to-red-700 text-white p-5 rounded-2xl shadow-2xl border-2 border-red-300 animate-slide-in">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0 animate-pulse">
-              <ShieldAlert className="w-6 h-6" />
-            </div>
-            <div className="flex-1">
-              <p className="font-bold text-sm uppercase tracking-wider mb-1">SOS Broadcast Active</p>
-              <p className="text-xs leading-relaxed text-white/95">
-                Control Panel + nearby citizens have been alerted. Green corridor will open on your route.
-              </p>
-              <button onClick={handleCancelSOS}
-                className="mt-3 w-full py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-bold border border-white/30 transition-colors">
-                ✕ Cancel SOS
-              </button>
             </div>
           </div>
         </div>
@@ -339,6 +400,12 @@ export const CitizenDashboard: React.FC = () => {
             <p className="text-xs text-slate-400 mb-6 flex items-center gap-1.5">
               <MousePointerClick className="w-3.5 h-3.5 text-cyan-400" /> Photo required · Click map to fine-tune location
             </p>
+            <div className="mb-4 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2">
+              <Award className="w-4 h-4 text-emerald-400 shrink-0" />
+              <p className="text-[11px] text-emerald-200">
+                Accurate reports earn <strong>+15 credits</strong>. Misleading reports lose <strong>−10</strong>.
+              </p>
+            </div>
             <form onSubmit={handleReportSubmit}>
               <div className="space-y-5">
                 <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl">
@@ -370,12 +437,11 @@ export const CitizenDashboard: React.FC = () => {
                   </label>
                   <textarea name="desc" rows={3} required
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:ring-2 focus:ring-cyan-500"
-                    placeholder="Describe the situation... (keywords like collision, flood, pothole improve AI trust)" />
+                    placeholder="Describe the situation..." />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-2">
                     Photo Evidence <span className="text-red-400">*</span>
-                    <span className="text-[10px] text-slate-500 ml-1 font-normal">(required for AI verification)</span>
                   </label>
                   {!photoDataUrl ? (
                     <label className="block cursor-pointer">
@@ -403,7 +469,7 @@ export const CitizenDashboard: React.FC = () => {
                   )}
                 </div>
                 <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                  <MapPin className="w-3 h-3" /> Sent to Control Panel · AI will compute trust score
+                  <MapPin className="w-3 h-3" /> Sent to police for verification
                 </p>
               </div>
               <div className="flex gap-3 mt-8">
@@ -425,7 +491,15 @@ export const CitizenDashboard: React.FC = () => {
           to { transform: translateX(0); opacity: 1; }
         }
         .animate-slide-in { animation: slide-in 0.4s ease-out; }
+        @keyframes credit-pop {
+          0% { transform: scale(0.4) translateY(6px); opacity: 0; }
+          60% { transform: scale(1.15) translateY(-2px); opacity: 1; }
+          100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        .animate-credit-pop { animation: credit-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
       `}</style>
     </div>
   );
 };
+
+export default CitizenDashboard;

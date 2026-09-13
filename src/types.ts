@@ -10,6 +10,8 @@ export interface User {
   customVehicleType?: string;
   policeId?: string;
   area?: string;
+  /** Demo gamification — credits for accurate / fast reporting */
+  creditPoints?: number;
 }
 
 export type HazardType = 'accident' | 'waterlogging' | 'rally' | 'construction' | 'pothole' | 'other';
@@ -28,6 +30,8 @@ export interface Report {
   reportedBy?: string;
   image?: string;
   aiTrust?: number;
+  /** Timestamp of submission — used to compute response-speed bonus */
+  reportedAt?: number;
 }
 
 export interface SOSAlert {
@@ -41,20 +45,6 @@ export interface SOSAlert {
 }
 
 export type LightColor = 'red' | 'yellow' | 'green';
-
-/** Haversine distance in km */
-export const haversineKm = (
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number },
-): number => {
-  const R = 6371;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const lat1 = (a.lat * Math.PI) / 180;
-  const lat2 = (b.lat * Math.PI) / 180;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-};
 
 export const SIGNAL = {
   nsColor: (s: SignalState): LightColor => {
@@ -77,14 +67,6 @@ export const SIGNAL = {
       case 'ew-yellow': return 'E/W · YELLOW';
     }
   },
-  short: (s: SignalState): string => {
-    switch (s) {
-      case 'ns-green': return 'NS ▶';
-      case 'ns-yellow': return 'NS ⚠';
-      case 'ew-green': return 'EW ▶';
-      case 'ew-yellow': return 'EW ⚠';
-    }
-  },
   next: (s: SignalState): SignalState => {
     switch (s) {
       case 'ns-green': return 'ns-yellow';
@@ -100,7 +82,6 @@ export const SIGNAL = {
   },
 } as const;
 
-/** Compute a demo "AI trust" score for a citizen photo+report */
 export const computeAiTrust = (
   type: HazardType,
   desc: string,
@@ -121,3 +102,10 @@ export const computeAiTrust = (
   score += hits * 4;
   return Math.min(99, Math.round(score));
 };
+
+/** Credit adjustment rules for reports */
+export const CREDIT_RULES = {
+  verified: 15,    // reward accurate reports
+  rejected: -10,   // penalize misleading reports
+  minPoints: 0,    // never let credits fall below this
+} as const;

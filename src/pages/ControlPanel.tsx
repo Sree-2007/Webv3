@@ -24,9 +24,9 @@ interface Junction {
 
 const JUNCTIONS: Junction[] = [
   { id: 'j1', code: 'CAM-01', name: 'Silk Board', spawnRate: 3.5, ambulance: true },
-  { id: 'j2', code: 'CAM-02', name: 'HSR Layout', spawnRate: 3.0, ambulance: false },
-  { id: 'j3', code: 'CAM-03', name: 'Koramangala', spawnRate: 2.5, ambulance: false },
-  { id: 'j4', code: 'CAM-04', name: 'BTM Layout', spawnRate: 3.0, ambulance: true },
+  { id: 'j2', code: 'CAM-02', name: 'HSR Layout', spawnRate: 3.5, ambulance: false },
+  { id: 'j3', code: 'CAM-03', name: 'Koramangala', spawnRate: 3.5, ambulance: false },
+  { id: 'j4', code: 'CAM-04', name: 'BTM Layout', spawnRate: 3.5, ambulance: true },
 ];
 
 const TrafficLightColumn: React.FC<{ color: LightColor; label: string }> = ({ color, label }) => {
@@ -56,7 +56,7 @@ const TrafficLightColumn: React.FC<{ color: LightColor; label: string }> = ({ co
 export const ControlPanel: React.FC = () => {
   const {
     signals, updateSignal, reports, addReport, updateReportStatus, deleteReport,
-    currentUser, logout, sosAlert, dismissSOS, sosHistory, deleteSOSHistory,
+    currentUser, logout, sosAlert, sosHistory, deleteSOSHistory,
   } = useApp();
   const [activeTab, setActiveTab] = useState<'cameras' | 'map' | 'signals' | 'reports'>('cameras');
   const [autoMode, setAutoMode] = useState(true);
@@ -85,14 +85,21 @@ export const ControlPanel: React.FC = () => {
   signalsRef.current = signals;
   const corridorRef = useRef(corridorActive);
   corridorRef.current = corridorActive;
+  const autoModeRef = useRef(autoMode);
+  autoModeRef.current = autoMode;
   const phaseStartRef = useRef<Record<string, number>>({});
   const densityRef = useRef<Record<string, { ns: number; ew: number }>>({});
+
+  const updateSignalRef = useRef(updateSignal);
+  updateSignalRef.current = updateSignal;
+
+  const prevSOSIdRef = useRef<string | null>(null);
 
   const handleDensity = (cameraId: string, ns: number, ew: number) => {
     densityRef.current[cameraId] = { ns, ew };
   };
 
-  // Auto-show SOS modal on new SOS
+  // Auto-open the SOS modal when a new SOS arrives
   useEffect(() => {
     if (sosAlert) setShowSOSModal(true);
   }, [sosAlert?.id]);
@@ -106,30 +113,51 @@ export const ControlPanel: React.FC = () => {
     reportsCountRef.current = reports.length;
   }, [reports]);
 
+  /* ═══════════════════════════════════════════════════════════════════
+     SOS corridor effect — corridor stays open until SOS is CANCELLED
+     by the ambulance (or the SOS state is cleared from App).
+     ═══════════════════════════════════════════════════════════════════ */
   useEffect(() => {
-    if (!sosAlert) return;
-    setCorridorActive(true);
-    if (autoMode) {
-      const order = ['j1', 'j4', 'j3', 'j2'];
-      order.forEach((id, i) => {
-        setTimeout(() => {
-          updateSignal(id, 'ns-green');
-          phaseStartRef.current[id] = Date.now();
-        }, i * 700);
-      });
+    const currentId = sosAlert?.id ?? null;
+    const prevId = prevSOSIdRef.current;
+
+    /* ── Case A: A new SOS just arrived ── */
+    if (currentId && currentId !== prevId) {
+      prevSOSIdRef.current = currentId;
+      setCorridorActive(true);
+
+      if (autoModeRef.current) {
+        const order = ['j1', 'j4', 'j3', 'j2'];
+        order.forEach((id, i) => {
+          setTimeout(() => {
+            updateSignalRef.current(id, 'ns-green');
+            phaseStartRef.current[id] = Date.now();
+          }, i * 700);
+        });
+      }
+      return;
     }
-    const t = setTimeout(() => {
+
+    /* ── Case B: SOS was cancelled by the ambulance ── */
+    if (!currentId && prevId) {
+      prevSOSIdRef.current = null;
       setCorridorActive(false);
-      if (autoMode) {
+      if (autoModeRef.current) {
         ['j1', 'j2', 'j3', 'j4'].forEach(id => {
-          updateSignal(id, 'ew-green');
+          updateSignalRef.current(id, 'ew-green');
           phaseStartRef.current[id] = Date.now();
         });
       }
-    }, 9000);
-    return () => clearTimeout(t);
-  }, [sosAlert, autoMode, updateSignal]);
+      setNewReportAlert('✓ SOS cancelled by ambulance · Green corridor closed');
+      setTimeout(() => setNewReportAlert(null), 3500);
+      return;
+    }
 
+    /* ── Case C: No SOS, no transition ── */
+    prevSOSIdRef.current = currentId;
+  }, [sosAlert]);
+
+  /* AI adaptive signal cycle — density-based comparison */
   useEffect(() => {
     if (!autoMode) return;
     const now = Date.now();
@@ -162,12 +190,12 @@ export const ControlPanel: React.FC = () => {
         }
         if (elapsed > duration) {
           phaseStartRef.current[id] = nowTs;
-          updateSignal(id, SIGNAL.next(phase));
+          updateSignalRef.current(id, SIGNAL.next(phase));
         }
       });
     }, 500);
     return () => clearInterval(interval);
-  }, [autoMode, updateSignal]);
+  }, [autoMode]);
 
   const officerPos = currentUser?.area?.toLowerCase().includes('silk')
     ? { lat: 12.9172, lng: 77.6229, label: currentUser.name || 'Officer' }
@@ -206,6 +234,7 @@ export const ControlPanel: React.FC = () => {
       status: 'verified',
       description: policeDescription,
       reportedBy: `police:${currentUser?.username || 'officer'}`,
+      reportedAt: Date.now(),
     });
     setShowAddReport(false);
     setShowMapPicker(false);
@@ -223,10 +252,18 @@ export const ControlPanel: React.FC = () => {
     setPoliceCustomType('');
   };
 
-  const handleDismissSOS = () => {
-    dismissSOS();
+  /**
+   * Police can minimize the modal / acknowledge the alert, but the corridor
+   * stays active until the ambulance cancels the SOS. Police actions here
+   * only affect what the operator sees, not the SOS state itself.
+   */
+  const handleMinimizeSOS = () => {
     setShowSOSModal(false);
-    showToast('SOS alert dismissed from dashboard');
+  };
+
+  const handleAcknowledgeSOS = () => {
+    setShowSOSModal(false);
+    showToast('SOS acknowledged · Corridor remains active until ambulance cancels');
   };
 
   const renderReportCard = (report: Report) => (
@@ -387,11 +424,7 @@ export const ControlPanel: React.FC = () => {
         className="flex-1 bg-slate-900/60 border border-slate-800 rounded-3xl p-6 relative"
         style={{ minHeight: 800 }}
       >
-        {/* ═══════════════════════════════════════════════════════
-            CAMERAS — always absolute inset-6 flex-col.
-            Same box in every state → Canvas never resizes → RAF
-            loop never restarts. Only opacity / z-index toggle.
-           ═══════════════════════════════════════════════════════ */}
+        {/* CAMERAS — always mounted */}
         <div
           className="absolute inset-6 flex flex-col transition-opacity duration-200"
           style={{
@@ -460,11 +493,7 @@ export const ControlPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* ═══════════════════════════════════════════════════════
-            MAP — always absolute inset-6 flex-col.
-            Leaflet's container never changes size between tab
-            switches → tiles render correctly from the first frame.
-           ═══════════════════════════════════════════════════════ */}
+        {/* MAP — always mounted */}
         <div
           className="absolute inset-6 flex flex-col transition-opacity duration-200"
           style={{
@@ -502,9 +531,7 @@ export const ControlPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* ═══════════════════════════════════════════════════════
-            SIGNALS — conditional
-           ═══════════════════════════════════════════════════════ */}
+        {/* SIGNALS */}
         {activeTab === 'signals' && (
           <div className="h-full overflow-auto">
             <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
@@ -588,9 +615,7 @@ export const ControlPanel: React.FC = () => {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            REPORTS — conditional with 3 tabs
-           ═══════════════════════════════════════════════════════ */}
+        {/* REPORTS */}
         {activeTab === 'reports' && (
           <div className="h-full overflow-hidden flex flex-col">
             <div className="flex justify-between items-center mb-5 flex-wrap gap-3">
@@ -663,14 +688,14 @@ export const ControlPanel: React.FC = () => {
         )}
       </div>
 
-      {/* New report alert */}
+      {/* Notification banner (new hazard or SOS-cancelled) */}
       {newReportAlert && (
         <div className="fixed top-24 right-8 z-[1500] bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-bold shadow-2xl flex items-center gap-3 animate-slide-in">
           <Bell className="w-5 h-5" /> {newReportAlert}
         </div>
       )}
 
-      {/* SOS banner (dashboard-level, dismissible via X) */}
+      {/* Persistent SOS banner — stays until the ambulance cancels */}
       {sosAlert && !showSOSModal && (
         <button
           onClick={() => setShowSOSModal(true)}
@@ -680,13 +705,8 @@ export const ControlPanel: React.FC = () => {
           <span className="text-sm">
             🚨 SOS ACTIVE · {sosAlert.ambulanceNo} · @{sosAlert.ambulanceUser}
           </span>
-          <span
-            role="button"
-            onClick={(e) => { e.stopPropagation(); handleDismissSOS(); }}
-            className="ml-2 p-1.5 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
-            title="Dismiss SOS"
-          >
-            <X className="w-4 h-4" />
+          <span className="ml-2 text-[10px] uppercase tracking-widest text-white/70">
+            Awaiting ambulance cancel
           </span>
         </button>
       )}
@@ -698,9 +718,9 @@ export const ControlPanel: React.FC = () => {
             <div className="absolute -inset-1 rounded-3xl border-4 border-red-500/40 animate-pulse pointer-events-none" />
 
             <button
-              onClick={handleDismissSOS}
+              onClick={handleMinimizeSOS}
               className="absolute top-4 right-4 p-2 rounded-xl bg-red-500/20 hover:bg-red-500/40 text-red-100 transition-colors border border-red-500/40"
-              title="Dismiss SOS"
+              title="Minimize (SOS stays active)"
             >
               <X className="w-5 h-5" />
             </button>
@@ -736,8 +756,8 @@ export const ControlPanel: React.FC = () => {
 
               <div className="bg-red-500/10 border border-red-500/40 rounded-2xl p-5 mb-6">
                 <p className="text-sm text-red-200 leading-relaxed">
-                  <strong className="text-red-300">ACTION REQUIRED:</strong> Green corridor activated.
-                  Manual override locked until the ambulance clears the corridor.
+                  <strong className="text-red-300">ACTION REQUIRED:</strong> Green corridor is active.
+                  It will remain open until the ambulance cancels the SOS from its dashboard.
                 </p>
               </div>
 
@@ -745,21 +765,21 @@ export const ControlPanel: React.FC = () => {
                 <div className="flex items-center gap-2 text-red-300">
                   <div className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
                   <span className="text-xs font-bold tracking-wider">
-                    AUTO-CLEARS IN {Math.max(0, Math.ceil((sosAlert.expiresAt - Date.now()) / 1000))}s
+                    LIVE · Awaiting ambulance cancel
                   </span>
                 </div>
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setShowSOSModal(false)}
+                    onClick={handleMinimizeSOS}
                     className="px-5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold transition-colors border border-slate-700"
                   >
                     Minimize
                   </button>
                   <button
-                    onClick={handleDismissSOS}
+                    onClick={handleAcknowledgeSOS}
                     className="px-6 py-3 rounded-2xl bg-red-500 hover:bg-red-400 text-white font-bold transition-colors shadow-lg"
                   >
-                    Acknowledge & Close
+                    Acknowledge
                   </button>
                 </div>
               </div>

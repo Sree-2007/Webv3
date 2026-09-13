@@ -3,92 +3,51 @@ import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
 import { CitizenDashboard } from './pages/CitizenDashboard';
 import { ControlPanel } from './pages/ControlPanel';
-import { User, Report, SignalState, ReportStatus, SOSAlert } from './types';
+import { User, Report, SignalState, ReportStatus, SOSAlert, CREDIT_RULES } from './types';
 import { DEMO_USERS } from './demoUsers';
 
 type View = 'landing' | 'citizenAuth' | 'controlAuth';
 
-const K_USERS = 'drishti_users_v6';
-const K_REPORTS = 'drishti_reports_v6';
-const K_SIGNALS = 'drishti_signals_v6';
-const K_SOS = 'drishti_sos_v6';
-const K_SOS_HISTORY = 'drishti_sos_history_v6';
+const K_USERS = 'drishti_users_v9';
+const K_REPORTS = 'drishti_reports_v9';
+const K_SIGNALS = 'drishti_signals_v9';
+const K_SOS = 'drishti_sos_v9';
+const K_SOS_HISTORY = 'drishti_sos_history_v9';
 
 const SEED_REPORTS: Report[] = [
-  // ── Own reports by demo citizen ────────────────────────────
   { id: '2', type: 'waterlogging', lat: 12.9085, lng: 77.5890, status: 'pending',
     description: 'Water pooling after last night rain on BTM 16th Main.',
-    reportedBy: 'citizen', aiTrust: 82 },
-
-  // ── Other citizens ─────────────────────────────────────────
+    reportedBy: 'citizen', aiTrust: 82, reportedAt: Date.now() - 1000 * 60 * 8 },
   { id: '3', type: 'accident', lat: 12.9172, lng: 77.6229, status: 'verified',
     description: 'Minor collision blocking left lane near Silk Board flyover.',
-    reportedBy: 'priya.sharma', aiTrust: 91 },
+    reportedBy: 'priya.sharma', aiTrust: 91, reportedAt: Date.now() - 1000 * 60 * 30 },
   { id: '4', type: 'waterlogging', lat: 12.9121, lng: 77.6445, status: 'verified',
     description: 'Heavy water logging at HSR 27th Main, autos stuck.',
-    reportedBy: 'arjun.reddy', aiTrust: 88 },
+    reportedBy: 'arjun.reddy', aiTrust: 88, reportedAt: Date.now() - 1000 * 60 * 45 },
   { id: '5', type: 'rally', lat: 12.9352, lng: 77.6245, status: 'verified',
     description: 'Political rally passing through Koramangala 80ft Road.',
-    reportedBy: 'kavya.iyer', aiTrust: 76 },
+    reportedBy: 'kavya.iyer', aiTrust: 76, reportedAt: Date.now() - 1000 * 60 * 60 },
   { id: '6', type: 'construction', lat: 12.9278, lng: 77.5980, status: 'verified',
     description: 'BBMP road repair work — single lane diversion near Jayanagar 4th Block.',
-    reportedBy: 'rohan.gupta', aiTrust: 93 },
+    reportedBy: 'rohan.gupta', aiTrust: 93, reportedAt: Date.now() - 1000 * 60 * 90 },
   { id: '7', type: 'pothole', lat: 12.9240, lng: 77.5910, status: 'pending',
     description: 'Pothole cluster on Jayanagar 9th Block main road.',
-    reportedBy: 'meera.nair', aiTrust: 71 },
+    reportedBy: 'meera.nair', aiTrust: 71, reportedAt: Date.now() - 1000 * 60 * 20 },
   { id: '8', type: 'rally', lat: 12.8995, lng: 77.5800, status: 'pending',
     description: 'Local political rally near BTM 2nd Stage — expect delays.',
-    reportedBy: 'kavya.iyer', aiTrust: 68 },
-
-  // ═══════════════════════════════════════════════════════════
-  //  ROUTE: BTM → Electronic City  (Hosur Road)  ·  4 hazards
-  // ═══════════════════════════════════════════════════════════
-  { id: 'h1', type: 'construction', lat: 12.9080, lng: 77.5910, status: 'verified',
-    description: 'Metro pillar work on BTM 16th Main — road narrowed to single lane.',
-    reportedBy: 'suresh.kumar', aiTrust: 92 },
-  { id: 'h2', type: 'accident', lat: 12.8990, lng: 77.6195, status: 'verified',
-    description: 'Two-vehicle collision under Bommanahalli flyover — right lane blocked.',
-    reportedBy: 'priya.sharma', aiTrust: 95 },
-  { id: 'h3', type: 'waterlogging', lat: 12.8780, lng: 77.6380, status: 'verified',
-    description: 'Standing water on Hosur Road near Singasandra flyover — cars stalling.',
-    reportedBy: 'meera.nair', aiTrust: 90 },
-  { id: 'h4', type: 'accident', lat: 12.8600, lng: 77.6520, status: 'verified',
-    description: 'Bike skid at Electronic City elevated expressway entrance.',
-    reportedBy: 'kavya.iyer', aiTrust: 86 },
-
-  // ═══════════════════════════════════════════════════════════
-  //  ROUTE: BTM → Koramangala / HSR  (Sarjapur Road)  ·  2 hazards
-  // ═══════════════════════════════════════════════════════════
-  { id: 'h5', type: 'pothole', lat: 12.9175, lng: 77.6100, status: 'verified',
-    description: 'Pothole on Sarjapur Road near Koramangala–Silk Board junction.',
-    reportedBy: 'rohan.gupta', aiTrust: 82 },
-  { id: 'h6', type: 'waterlogging', lat: 12.9150, lng: 77.6320, status: 'verified',
-    description: 'Knee-deep water on Sarjapur Road before HSR 27th Main after overnight rain.',
-    reportedBy: 'arjun.reddy', aiTrust: 88 },
-
-  // ═══════════════════════════════════════════════════════════
-  //  ROUTE: BTM → Marathahalli  (Outer Ring Road)  ·  2 hazards
-  // ═══════════════════════════════════════════════════════════
-  { id: 'h7', type: 'construction', lat: 12.9260, lng: 77.6710, status: 'verified',
-    description: 'Road repair on Outer Ring Road near Bellandur — one lane closed.',
-    reportedBy: 'suresh.kumar', aiTrust: 85 },
-  { id: 'h8', type: 'accident', lat: 12.9450, lng: 77.6900, status: 'verified',
-    description: 'Multi-vehicle pileup near Marathahalli bridge — heavy congestion.',
-    reportedBy: 'priya.sharma', aiTrust: 93 },
-
-  // ── POLICE reports ─────────────────────────────────────────
+    reportedBy: 'kavya.iyer', aiTrust: 68, reportedAt: Date.now() - 1000 * 60 * 12 },
+  { id: '9', type: 'accident', lat: 12.8847, lng: 77.6143, status: 'verified',
+    description: 'Two-vehicle collision near Bommanahalli on Hosur Road — right lane blocked.',
+    reportedBy: 'priya.sharma', aiTrust: 95, reportedAt: Date.now() - 1000 * 60 * 120 },
+  { id: '10', type: 'waterlogging', lat: 12.8680, lng: 77.6370, status: 'verified',
+    description: 'Severe waterlogging near Singasandra on Hosur Road.',
+    reportedBy: 'arjun.reddy', aiTrust: 90, reportedAt: Date.now() - 1000 * 60 * 150 },
   { id: '13', type: 'construction', lat: 12.9190, lng: 77.6300, status: 'verified',
     description: 'Metro pillar work near Silk Board junction — service road closed.',
-    reportedBy: 'police:officer-blr' },
+    reportedBy: 'police:officer-blr', reportedAt: Date.now() - 1000 * 60 * 200 },
   { id: '14', type: 'waterlogging', lat: 12.9015, lng: 77.6050, status: 'verified',
     description: 'Underpass flooding near Madiwala market, avoid the dip.',
-    reportedBy: 'police:officer-blr' },
-  { id: '15', type: 'accident', lat: 12.9569, lng: 77.7011, status: 'verified',
-    description: 'Truck breakdown on Marathahalli bridge — heavy congestion.',
-    reportedBy: 'police:officer-blr' },
-  { id: '16', type: 'construction', lat: 12.9716, lng: 77.6412, status: 'verified',
-    description: 'Indiranagar 100ft Road metro work — one-way diversion.',
-    reportedBy: 'police:officer-blr' },
+    reportedBy: 'police:officer-blr', reportedAt: Date.now() - 1000 * 60 * 240 },
 ];
 
 const SEED_SIGNALS: Record<string, SignalState> = {
@@ -104,11 +63,19 @@ const load = <T,>(key: string, fallback: T): T => {
   }
 };
 
+/** Report contribution to credits — pending contributes 0. */
+const creditForStatus = (status: ReportStatus): number => {
+  if (status === 'verified') return CREDIT_RULES.verified;
+  if (status === 'rejected') return CREDIT_RULES.rejected;
+  return 0;
+};
+
 interface AppState {
   currentUser: User | null;
   setCurrentUser: (u: User | null) => void;
   users: User[];
   addUser: (u: User) => void;
+  adjustCredits: (username: string, delta: number) => void;
   reports: Report[];
   addReport: (r: Report) => void;
   updateReportStatus: (id: string, s: ReportStatus) => void;
@@ -145,11 +112,18 @@ export default function App() {
   );
   const [sosHistory, setSosHistory] = useState<SOSAlert[]>(() => load(K_SOS_HISTORY, []));
 
+  /**
+   * SOS is now sticky — it stays active until the ambulance manually cancels it.
+   * On reload, we restore whatever SOS was last saved.
+   */
   const [sosAlert, setSosAlert] = useState<SOSAlert | null>(() => {
-    const stored = load<SOSAlert | null>(K_SOS, null);
-    if (stored && Date.now() < stored.expiresAt) return stored;
-    return null;
+    return load<SOSAlert | null>(K_SOS, null);
   });
+
+  const reportsRef = useRef(reports);
+  reportsRef.current = reports;
+  const usersRef = useRef(users);
+  usersRef.current = users;
 
   const prevRef = useRef<{ users: string; reports: string; signals: string; sos: string; sosHist: string }>({
     users: '', reports: '', signals: '', sos: '', sosHist: '',
@@ -195,10 +169,7 @@ export default function App() {
         try { setSosHistory(JSON.parse(e.newValue)); } catch {}
       } else if (e.key === K_SOS) {
         if (e.newValue) {
-          try {
-            const alert: SOSAlert = JSON.parse(e.newValue);
-            if (Date.now() < alert.expiresAt) setSosAlert(alert);
-          } catch {}
+          try { setSosAlert(JSON.parse(e.newValue)); } catch {}
         } else {
           setSosAlert(null);
         }
@@ -208,22 +179,46 @@ export default function App() {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  useEffect(() => {
-    if (!sosAlert) return;
-    const remaining = sosAlert.expiresAt - Date.now();
-    if (remaining <= 0) { setSosAlert(null); return; }
-    const t = setTimeout(() => setSosAlert(null), remaining);
-    return () => clearTimeout(t);
-  }, [sosAlert]);
-
   const addUser = (u: User) => setUsers(prev => [...prev, u]);
+
+  const adjustCredits = (username: string, delta: number) => {
+    if (!username || delta === 0) return;
+    setUsers(prev => prev.map(u =>
+      u.username === username
+        ? { ...u, creditPoints: Math.max(CREDIT_RULES.minPoints, (u.creditPoints ?? 0) + delta) }
+        : u
+    ));
+  };
+
   const addReport = (r: Report) => setReports(prev => [...prev, r]);
-  const updateReportStatus = (id: string, s: ReportStatus) =>
-    setReports(prev => prev.map(r => (r.id === id ? { ...r, status: s } : r)));
+
+  const updateReportStatus = (id: string, newStatus: ReportStatus) => {
+    const report = reportsRef.current.find(r => r.id === id);
+    if (!report) return;
+    if (report.status === newStatus) return;
+
+    if (
+      report.reportedBy &&
+      !report.reportedBy.startsWith('police:') &&
+      usersRef.current.some(u => u.username === report.reportedBy)
+    ) {
+      const oldContribution = creditForStatus(report.status);
+      const newContribution = creditForStatus(newStatus);
+      const delta = newContribution - oldContribution;
+      if (delta !== 0) adjustCredits(report.reportedBy, delta);
+    }
+
+    setReports(prev => prev.map(r => (r.id === id ? { ...r, status: newStatus } : r)));
+  };
+
   const deleteReport = (id: string) => setReports(prev => prev.filter(r => r.id !== id));
   const updateSignal = (id: string, s: SignalState) =>
     setSignals(prev => (prev[id] === s ? prev : { ...prev, [id]: s }));
 
+  /**
+   * Trigger a new SOS. The alert stays active until cancelled by the ambulance.
+   * `expiresAt` is set to a very far-future value so nothing auto-clears it.
+   */
   const triggerSOS = (ambulanceUser: string, vehicleNo: string, lat: number, lng: number) => {
     const alert: SOSAlert = {
       id: Date.now().toString(),
@@ -231,13 +226,14 @@ export default function App() {
       ambulanceNo: vehicleNo,
       lat, lng,
       triggeredAt: Date.now(),
-      expiresAt: Date.now() + 22000,
+      // No auto-expire. This value is high enough to be effectively permanent.
+      expiresAt: 9999999999999,
     };
     setSosAlert(alert);
     setSosHistory(prev => [...prev, alert]);
   };
 
-  /** Only the ambulance that raised the SOS can cancel it */
+  /** Only the ambulance that raised the SOS can cancel it. */
   const cancelSOS = (ambulanceUser: string) => {
     setSosAlert(prev => (prev && prev.ambulanceUser === ambulanceUser ? null : prev));
   };
@@ -250,7 +246,7 @@ export default function App() {
   return (
     <AppContext.Provider
       value={{
-        currentUser, setCurrentUser, users, addUser,
+        currentUser, setCurrentUser, users, addUser, adjustCredits,
         reports, addReport, updateReportStatus, deleteReport,
         signals, updateSignal,
         sosActive: !!sosAlert, sosAlert, sosHistory,

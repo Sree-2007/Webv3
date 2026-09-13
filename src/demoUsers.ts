@@ -1,9 +1,5 @@
 import { User } from './types';
 
-/**
- * Canonical demo users — always available regardless of app state.
- * These are used to seed the app AND as a fallback for login.
- */
 export const DEMO_USERS: User[] = [
   {
     username: 'citizen',
@@ -12,6 +8,7 @@ export const DEMO_USERS: User[] = [
     vehicleType: 'Car',
     vehicleNo: 'KA-01-AB-1234',
     name: 'Demo Citizen',
+    creditPoints: 85,
   },
   {
     username: 'ambulance',
@@ -20,6 +17,7 @@ export const DEMO_USERS: User[] = [
     vehicleType: 'Ambulance',
     vehicleNo: 'KA-02-EM-9999',
     name: 'Demo Ambulance Driver',
+    creditPoints: 120,
   },
   {
     username: 'police',

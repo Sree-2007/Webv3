@@ -100,7 +100,19 @@ export const AuthPage: React.FC<Props> = ({ mode, onBack }) => {
     : ' focus:ring-amber-500 focus:border-amber-500';
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 flex">
+    <div className="min-h-screen w-full bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 flex relative">
+
+      {/* ═════════════ BACK BUTTON — topmost-leftmost of the entire page ═════════════ */}
+      <button
+        onClick={onBack}
+        aria-label="Go back"
+        className="fixed top-5 left-5 z-[999] w-11 h-11 rounded-full flex items-center justify-center
+                   bg-slate-900/75 hover:bg-slate-900 backdrop-blur-md border border-white/15
+                   shadow-lg transition-all active:scale-95"
+      >
+        <ArrowLeft className="w-5 h-5 text-white" />
+      </button>
+
       {/* ═════════════ LEFT PANEL — IMAGE / BRAND (hidden on mobile) ═════════════ */}
       <div className="hidden md:flex md:w-1/2 relative overflow-hidden min-h-screen">
         <img
@@ -115,16 +127,6 @@ export const AuthPage: React.FC<Props> = ({ mode, onBack }) => {
               : 'from-amber-900/80 via-slate-950/90 to-slate-950'
           }`}
         />
-
-        {/* Back button */}
-        <div className="absolute top-6 left-6 z-10">
-          <button
-            onClick={onBack}
-            className="w-11 h-11 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center hover:bg-white/20 transition-all border border-white/10"
-          >
-            <ArrowLeft className="w-5 h-5 text-white" />
-          </button>
-        </div>
 
         {/* Brand content centered */}
         <div className="relative z-10 flex flex-col justify-center items-center w-full px-10 text-center">
@@ -164,14 +166,6 @@ export const AuthPage: React.FC<Props> = ({ mode, onBack }) => {
 
       {/* ═════════════ RIGHT PANEL — FORM (scrollable) ═════════════ */}
       <div className="w-full md:w-1/2 flex justify-center bg-white relative">
-        {/* Back button for mobile */}
-        <button
-          onClick={onBack}
-          className="absolute top-6 left-6 md:hidden w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center hover:bg-slate-200 transition-all z-10"
-        >
-          <ArrowLeft className="w-5 h-5 text-slate-700" />
-        </button>
-
         {/* Scrollable container */}
         <div className="w-full max-w-md px-6 md:px-8 py-20 md:py-10 overflow-y-auto">
           {/* Header */}

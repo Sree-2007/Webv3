@@ -173,15 +173,15 @@ export const LandingPage: React.FC<Props> = ({ onCitizen, onControl }) => {
                 whileHover={{ scale: 1.03, y: -4 }}
                 // Combine with a continuous loop when in view
                 style={{ animationDuration: `${f.floatDur}s` }}
-                className={`relative bg-slate-900/60 backdrop-blur-xl border ${colorClasses.split(' ').slice(2).join(' ')} p-7 rounded-3xl flex flex-col items-start text-left hover:bg-slate-800/80 transition-colors duration-300`}
+                className={`relative bg-slate-900/60 backdrop-blur-xl border ${(colorClasses ?? '').split(' ').slice(2).join(' ')} p-7 rounded-3xl flex flex-col items-start text-left hover:bg-slate-800/80 transition-colors duration-300`}
               >
                 {/* Floating pulse ring */}
                 <motion.div
                   animate={{ scale: [1, 1.15, 1], opacity: [0.4, 0.7, 0.4] }}
                   transition={{ duration: f.floatDur, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`absolute top-6 right-6 w-12 h-12 rounded-full ${colorClasses.split(' ')[1]}`}
+                  className={`absolute top-6 right-6 w-12 h-12 rounded-full ${(colorClasses ?? '').split(' ')[1] || ''}`}
                 />
-                <f.icon className={`w-8 h-8 mb-4 ${colorClasses.split(' ')[0]}`} />
+                <f.icon className={`w-8 h-8 mb-4 ${(colorClasses ?? '').split(' ')[0] || ''}`} />
                 <h3 className="font-semibold text-white text-base mb-3">{f.title}</h3>
                 <p className="text-sm text-slate-400 leading-relaxed">{f.desc}</p>
               </motion.div>

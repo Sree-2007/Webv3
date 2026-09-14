@@ -32,10 +32,12 @@ interface MapReport {
   description: string;
 }
 
-interface HazardInput {
+export interface ParkingZone {
   id: string;
+  name: string;
   lat: number;
   lng: number;
+  rate: number;
 }
 
 interface Props {
@@ -49,6 +51,10 @@ interface Props {
   onMapClick?: (lat: number, lng: number) => void;
   pickedPin?: { lat: number; lng: number } | null;
   focusLocation?: { lat: number; lng: number; label?: string } | null;
+  /* ── Parking ── */
+  parkingZones?: ParkingZone[];
+  parkingHighlight?: boolean;
+  selectedParking?: ParkingZone | null;
 }
 
 const PI = Math.PI;
@@ -131,12 +137,13 @@ const fetchRoute = async (waypoints: { lat: number; lng: number }[]) => {
 };
 
 /**
- * Compute detours on both sides of the route. Returns the list of hazard IDs
- * that actually sit on the direct route (and therefore get avoided).
+ * Compute detours on both sides of the route, ignoring only the hazards that
+ * actually sit on the direct path (< 60 m away). Returns the two candidate
+ * detour waypoint lists plus the list of avoided hazard IDs.
  */
 const computeAvoidanceBoth = (
   route: [number, number][],
-  hazards: HazardInput[],
+  hazards: { lat: number; lng: number; id?: string }[],
   offsetM = 110,
 ): {
   left: { lat: number; lng: number }[];
@@ -159,10 +166,8 @@ const computeAvoidanceBoth = (
     const before = route[Math.max(0, nearestIdx - 3)];
     const after = route[Math.min(route.length - 1, nearestIdx + 3)];
     const dirB = bearing(before, after);
-
     const perpL = dirB + PI / 2;
     const perpR = dirB - PI / 2;
-
     const dLatL = (offsetM * Math.sin(perpL)) / 111320;
     const dLngL = (offsetM * Math.cos(perpL)) / (111320 * Math.cos((h.lat * PI) / 180));
     const dLatR = (offsetM * Math.sin(perpR)) / 111320;
@@ -170,7 +175,7 @@ const computeAvoidanceBoth = (
 
     left.push({ lat: h.lat + dLatL, lng: h.lng + dLngL });
     right.push({ lat: h.lat + dLatR, lng: h.lng + dLngR });
-    avoidedIds.push(h.id);
+    if (h.id) avoidedIds.push(h.id);
   }
   return { left, right, avoidedIds };
 };
@@ -178,6 +183,7 @@ const computeAvoidanceBoth = (
 export const BengaluruMap: React.FC<Props> = ({
   signals, reports, userPos, destination, showSignals = false, rerouteActive = false,
   hideRouteBadge = false, onMapClick, pickedPin, focusLocation,
+  parkingZones = [], parkingHighlight = false, selectedParking = null,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -187,11 +193,19 @@ export const BengaluruMap: React.FC<Props> = ({
   const pickedLayerRef = useRef<L.LayerGroup | null>(null);
   const focusLayerRef = useRef<L.LayerGroup | null>(null);
   const highlightLayerRef = useRef<L.LayerGroup | null>(null);
+  const parkingLayerRef = useRef<L.LayerGroup | null>(null);
+  const parkingRouteLayerRef = useRef<L.LayerGroup | null>(null);
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [directRouteCoords, setDirectRouteCoords] = useState<[number, number][]>([]);
+  const [parkingRouteCoords, setParkingRouteCoords] = useState<[number, number][]>([]);
+  const [parkingRouteInfo, setParkingRouteInfo] = useState<{
+    distance: number;
+    duration: number;
+    avoided: number;
+  } | null>(null);
   const [routeInfo, setRouteInfo] = useState<{
     distance: number;
     duration: number;
@@ -202,7 +216,7 @@ export const BengaluruMap: React.FC<Props> = ({
   const [routeLoading, setRouteLoading] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
 
-  // Init map with OpenStreetMap tiles
+  // Init map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = L.map(containerRef.current, {
@@ -225,6 +239,8 @@ export const BengaluruMap: React.FC<Props> = ({
     pickedLayerRef.current = L.layerGroup().addTo(map);
     focusLayerRef.current = L.layerGroup().addTo(map);
     highlightLayerRef.current = L.layerGroup().addTo(map);
+    parkingLayerRef.current = L.layerGroup().addTo(map);
+    parkingRouteLayerRef.current = L.layerGroup().addTo(map);
 
     map.on('click', (e: L.LeafletMouseEvent) => {
       if (onMapClickRef.current) onMapClickRef.current(e.latlng.lat, e.latlng.lng);
@@ -245,6 +261,7 @@ export const BengaluruMap: React.FC<Props> = ({
     .sort()
     .join('|');
 
+  // ═══════════════ HAZARD-AWARE ROUTE (destination) ═══════════════
   useEffect(() => {
     if (!destination || !rerouteActive || !userPos) {
       setRouteCoords([]);
@@ -273,9 +290,9 @@ export const BengaluruMap: React.FC<Props> = ({
         const directDist = direct.routes[0].distance / 1000;
         const directDur = direct.routes[0].duration / 60;
 
-        const verifiedHazards: HazardInput[] = reports
+        const verifiedHazards = reports
           .filter(r => r.status === 'verified')
-          .map(r => ({ id: r.id, lat: r.lat, lng: r.lng }));
+          .map(r => ({ lat: r.lat, lng: r.lng, id: r.id }));
 
         const { left, right, avoidedIds } = computeAvoidanceBoth(directCoordsRaw, verifiedHazards, 110);
 
@@ -301,7 +318,6 @@ export const BengaluruMap: React.FC<Props> = ({
 
         const dLeft = rLeft.routes?.[0]?.distance ?? Infinity;
         const dRight = rRight.routes?.[0]?.distance ?? Infinity;
-
         const chosen = dLeft <= dRight ? rLeft : rRight;
         const chosenDist = Math.min(dLeft, dRight);
         const capFactor = 1.4;
@@ -345,7 +361,7 @@ export const BengaluruMap: React.FC<Props> = ({
     return () => { cancelled = true; };
   }, [destination, rerouteActive, userPos?.lat, userPos?.lng, hazardsKey]);
 
-  // Draw BOTH routes: red direct (unsafe) + blue safe reroute
+  // Draw both hazard routes
   useEffect(() => {
     const layer = routeLayerRef.current;
     const map = mapRef.current;
@@ -377,7 +393,207 @@ export const BengaluruMap: React.FC<Props> = ({
     }
   }, [routeCoords, directRouteCoords, rerouteActive]);
 
-  // ───── Highlight avoided hazard zones ─────
+  // ═══════════════ HAZARD-AWARE PARKING ROUTE ═══════════════
+  // Same pipeline as the hazard reroute: direct route → find hazards on path
+  // → try detours both sides → pick shorter. Green line draws the safe path.
+  useEffect(() => {
+    if (!selectedParking || !userPos) {
+      setParkingRouteCoords([]);
+      setParkingRouteInfo(null);
+      return;
+    }
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [snapStart, snapEnd] = await Promise.all([
+          snapToRoad(userPos.lat, userPos.lng),
+          snapToRoad(selectedParking.lat, selectedParking.lng),
+        ]);
+
+        // 1. Direct route
+        const direct = await fetchRoute([snapStart, snapEnd]);
+        if (cancelled) return;
+        if (!direct.routes?.[0]) {
+          setParkingRouteCoords([[userPos.lat, userPos.lng], [selectedParking.lat, selectedParking.lng]]);
+          return;
+        }
+
+        const directCoordsRaw: [number, number][] = direct.routes[0].geometry.coordinates.map(
+          (c: number[]) => [c[1], c[0]]
+        );
+        const directDist = direct.routes[0].distance / 1000;
+        const directDur = direct.routes[0].duration / 60;
+
+        // 2. Find hazards sitting on that direct path
+        const verifiedHazards = reports
+          .filter(r => r.status === 'verified')
+          .map(r => ({ lat: r.lat, lng: r.lng, id: r.id }));
+
+        const { left, right } = computeAvoidanceBoth(directCoordsRaw, verifiedHazards, 110);
+
+        // 3. No hazards → keep direct route
+        if (left.length === 0) {
+          const cleaned = cleanRoute(directCoordsRaw);
+          setParkingRouteCoords(cleaned);
+          setParkingRouteInfo({
+            distance: directDist,
+            duration: directDur,
+            avoided: 0,
+          });
+          return;
+        }
+
+        // 4. Try both detour directions in parallel
+        const [rLeft, rRight] = await Promise.all([
+          fetchRoute([snapStart, ...left, snapEnd]),
+          fetchRoute([snapStart, ...right, snapEnd]),
+        ]);
+        if (cancelled) return;
+
+        const dLeft = rLeft.routes?.[0]?.distance ?? Infinity;
+        const dRight = rRight.routes?.[0]?.distance ?? Infinity;
+        const chosen = dLeft <= dRight ? rLeft : rRight;
+        const chosenDist = Math.min(dLeft, dRight);
+        const capFactor = 1.4;
+
+        let finalCoords: [number, number][];
+        let finalDist: number;
+        let finalDur: number;
+        let avoidedCount: number;
+
+        if (chosen.routes?.[0] && chosenDist <= direct.routes[0].distance * capFactor) {
+          finalCoords = chosen.routes[0].geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
+          finalDist = chosenDist / 1000;
+          finalDur = chosen.routes[0].duration / 60;
+          avoidedCount = left.length;
+        } else {
+          // Detour is too long — fall back to the direct route
+          finalCoords = directCoordsRaw;
+          finalDist = directDist;
+          finalDur = directDur;
+          avoidedCount = 0;
+        }
+
+        const cleaned = cleanRoute(finalCoords);
+        setParkingRouteCoords(cleaned);
+        setParkingRouteInfo({
+          distance: finalDist,
+          duration: finalDur,
+          avoided: avoidedCount,
+        });
+      } catch {
+        if (!cancelled && userPos && selectedParking) {
+          setParkingRouteCoords([[userPos.lat, userPos.lng], [selectedParking.lat, selectedParking.lng]]);
+          setParkingRouteInfo(null);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedParking?.id, userPos?.lat, userPos?.lng, hazardsKey, reports]);
+
+  // Draw parking route — always green, same visual language as the reroute
+  useEffect(() => {
+    const layer = parkingRouteLayerRef.current;
+    const map = mapRef.current;
+    if (!layer || !map) return;
+    layer.clearLayers();
+    if (parkingRouteCoords.length < 2) return;
+
+    // Outer glow
+    L.polyline(parkingRouteCoords, {
+      color: '#166534', weight: 14, opacity: 0.35, lineCap: 'round', lineJoin: 'round',
+    }).addTo(layer);
+    // Main green line
+    L.polyline(parkingRouteCoords, {
+      color: '#22c55e', weight: 6, opacity: 1, lineCap: 'round', lineJoin: 'round',
+    }).addTo(layer);
+    // Dashed white line on top
+    L.polyline(parkingRouteCoords, {
+      color: '#ffffff', weight: 2, opacity: 0.6, dashArray: '8 14',
+    }).addTo(layer);
+
+    map.fitBounds(L.latLngBounds(parkingRouteCoords), { padding: [80, 80], maxZoom: 15 });
+  }, [parkingRouteCoords]);
+
+  // ═══════════════ PARKING MARKERS ═══════════════
+  useEffect(() => {
+    const layer = parkingLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!parkingZones || parkingZones.length === 0) return;
+
+    parkingZones.forEach(zone => {
+      const isSelected = selectedParking?.id === zone.id;
+      const bg = isSelected ? '#16a34a' : '#475569';
+      const border = isSelected ? '#22c55e' : '#94a3b8';
+
+      const pulseHtml = parkingHighlight
+        ? `<div class="parking-pulse-ring" style="
+              position:absolute; left:50%; top:50%;
+              width:34px; height:34px;
+              margin-left:-17px; margin-top:-17px;
+              border-radius:50%;
+              background: rgba(148,163,184,0.45);
+              pointer-events:none;
+            "></div>`
+        : '';
+
+      const icon = L.divIcon({
+        className: 'custom-parking',
+        html: `
+          <div style="position: relative; transform: translate(-50%, -50%);">
+            ${pulseHtml}
+            <div style="
+              position: relative;
+              width: 34px; height: 34px; border-radius: 50%;
+              background: ${bg};
+              border: 3px solid #ffffff;
+              display: flex; align-items: center; justify-content: center;
+              font-weight: 900; font-size: 15px; color: #ffffff;
+              box-shadow: 0 3px 10px rgba(0,0,0,0.35), 0 0 0 2px ${border};
+              font-family: system-ui, -apple-system;
+            ">P</div>
+            <div style="
+              position: absolute; left: 50%; top: 40px; transform: translateX(-50%);
+              background: #ffffff;
+              border: 1.5px solid ${border};
+              color: #0f172a;
+              padding: 2px 8px; border-radius: 6px;
+              font-size: 9.5px; font-weight: 800;
+              white-space: nowrap;
+              box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+              font-family: system-ui;
+            ">${zone.name}</div>
+          </div>`,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0],
+      });
+
+      const marker = L.marker([zone.lat, zone.lng], { icon, zIndexOffset: 1500 });
+      marker.bindPopup(
+        `<div style="font-family: ui-sans-serif, system-ui; width: 200px;">
+          <div style="display:flex; align-items:center; gap:8px; padding: 10px 12px 6px 12px; border-bottom: 1px solid #f1f5f9;">
+            <span style="
+              display: inline-flex; align-items:center; justify-content:center;
+              width: 22px; height: 22px; border-radius: 50%;
+              background: #16a34a; color:#fff; font-weight:900; font-size: 11px;
+            ">P</span>
+            <span style="font-size: 12px; font-weight: 700; color: #0f172a;">${zone.name}</span>
+          </div>
+          <div style="padding: 8px 12px 10px 12px; font-size: 12px; color: #475569;">
+            <div style="font-weight: 800; color: #16a34a; font-size: 13px;">₹${zone.rate} / hour</div>
+            <div style="font-size: 10px; color:#64748b; margin-top:3px;">Parking available nearby</div>
+          </div>
+        </div>`,
+        { className: 'custom-popup', closeButton: true, maxWidth: 220 }
+      );
+      marker.addTo(layer);
+    });
+  }, [parkingZones, parkingHighlight, selectedParking]);
+
+  // Highlight avoided hazards
   useEffect(() => {
     const layer = highlightLayerRef.current;
     const map = mapRef.current;
@@ -389,29 +605,21 @@ export const BengaluruMap: React.FC<Props> = ({
       const h = reports.find(r => r.id === id);
       if (!h) return;
 
-      // Pulsing red zone
       L.circle([h.lat, h.lng], {
-        radius: 120,
-        color: '#ef4444',
-        weight: 3,
-        fillColor: '#ef4444',
-        fillOpacity: 0.25,
-        dashArray: '8 6',
+        radius: 120, color: '#ef4444', weight: 3,
+        fillColor: '#ef4444', fillOpacity: 0.25, dashArray: '8 6',
       }).addTo(layer);
 
-      // Animated pulse ring
       const pulseIcon = L.divIcon({
         className: 'hazard-pulse',
         html: `
           <div style="position:absolute;left:-40px;top:-40px;width:80px;height:80px;border-radius:50%;background:rgba(239,68,68,0.3);animation:hazard-ping 0.9s cubic-bezier(0,0,0.2,1) infinite;"></div>
           <div style="position:absolute;left:-30px;top:-30px;width:60px;height:60px;border-radius:50%;background:rgba(239,68,68,0.2);animation:hazard-ping 0.9s cubic-bezier(0,0,0.2,1) infinite;animation-delay:0.3s;"></div>
         `,
-        iconSize: [0, 0],
-        iconAnchor: [0, 0],
+        iconSize: [0, 0], iconAnchor: [0, 0],
       });
       L.marker([h.lat, h.lng], { icon: pulseIcon, interactive: false, zIndexOffset: 2400 }).addTo(layer);
 
-      // "Avoided!" label above
       const labelIcon = L.divIcon({
         className: 'hazard-avoided-label',
         html: `
@@ -422,17 +630,16 @@ export const BengaluruMap: React.FC<Props> = ({
             box-shadow: 0 4px 14px rgba(239,68,68,0.6); border: 2px solid white;">
             ⚠ AVOIDED
           </div>`,
-        iconSize: [0, 0],
-        iconAnchor: [0, 0],
+        iconSize: [0, 0], iconAnchor: [0, 0],
       });
       L.marker([h.lat, h.lng], { icon: labelIcon, interactive: false, zIndexOffset: 2500 }).addTo(layer);
     });
 
-    // Auto-clear after 1.5 seconds
-    const t = setTimeout(() => setHighlightedIds([]), 1500);
+    const t = setTimeout(() => setHighlightedIds([]), 2000);
     return () => clearTimeout(t);
   }, [highlightedIds, reports]);
 
+  // Signals
   useEffect(() => {
     const layer = signalsLayerRef.current;
     if (!layer || !showSignals) return;
@@ -449,26 +656,22 @@ export const BengaluruMap: React.FC<Props> = ({
           <div style="position: relative; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -50%);">
             <div style="display: flex; gap: 3px; padding: 3px; background: #ffffff; border-radius: 10px;
                         box-shadow: 0 3px 10px rgba(0,0,0,0.25), 0 0 0 1.5px #e2e8f0;">
-              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${nsHex};
-                          box-shadow: 0 0 8px ${nsHex};"></div>
-              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${ewHex};
-                          box-shadow: 0 0 8px ${ewHex};"></div>
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${nsHex}; box-shadow: 0 0 8px ${nsHex};"></div>
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${ewHex}; box-shadow: 0 0 8px ${ewHex};"></div>
             </div>
-            <div style="margin-top: 3px; background: #ffffff;
-              border: 1.5px solid #e2e8f0; color: #0f172a;
-              padding: 2px 7px; border-radius: 6px; font-size: 8.5px;
-              font-weight: 800; letter-spacing: 0.4px; white-space: nowrap;
-              text-transform: uppercase; box-shadow: 0 2px 6px rgba(0,0,0,0.12);">
+            <div style="margin-top: 3px; background: #ffffff; border: 1.5px solid #e2e8f0; color: #0f172a;
+              padding: 2px 7px; border-radius: 6px; font-size: 8.5px; font-weight: 800; letter-spacing: 0.4px;
+              white-space: nowrap; text-transform: uppercase; box-shadow: 0 2px 6px rgba(0,0,0,0.12);">
               ${pos.name} · N/S | E/W
             </div>
           </div>`,
-        iconSize: [0, 0],
-        iconAnchor: [0, 0],
+        iconSize: [0, 0], iconAnchor: [0, 0],
       });
       L.marker([pos.lat, pos.lng], { icon, interactive: false }).addTo(layer);
     });
   }, [signals, showSignals]);
 
+  // Hazard markers + user + destination
   useEffect(() => {
     const layer = markersLayerRef.current;
     if (!layer) return;
@@ -492,31 +695,18 @@ export const BengaluruMap: React.FC<Props> = ({
               ${r.type}
             </div>
           </div>`,
-        iconSize: [30, 40],
-        iconAnchor: [15, 40],
+        iconSize: [30, 40], iconAnchor: [15, 40],
       });
 
       L.marker([r.lat, r.lng], { icon })
         .bindPopup(
           `<div style="font-family: ui-sans-serif, system-ui; width: 220px;">
-            <div style="display: flex; align-items: center; gap: 8px;
-                        padding: 10px 12px 6px 12px;
-                        border-bottom: 1px solid #f1f5f9;">
-              <span style="display: inline-block; width: 8px; height: 8px;
-                           border-radius: 50%; background: ${color};
-                           box-shadow: 0 0 8px ${color}66;"></span>
-              <span style="font-size: 12px; font-weight: 600;
-                           text-transform: capitalize; color: #0f172a;">
-                ${r.type}
-              </span>
-              <span style="margin-left: auto; font-size: 10px; font-weight: 600;
-                           text-transform: uppercase; letter-spacing: 0.3px;
-                           color: ${color};">${r.status}</span>
+            <div style="display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px 12px; border-bottom: 1px solid #f1f5f9;">
+              <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${color}; box-shadow: 0 0 8px ${color}66;"></span>
+              <span style="font-size: 12px; font-weight: 600; text-transform: capitalize; color: #0f172a;">${r.type}</span>
+              <span style="margin-left: auto; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; color: ${color};">${r.status}</span>
             </div>
-            <div style="padding: 8px 12px 10px 12px;
-                        font-size: 12px; line-height: 1.5; color: #475569;">
-              ${r.description}
-            </div>
+            <div style="padding: 8px 12px 10px 12px; font-size: 12px; line-height: 1.5; color: #475569;">${r.description}</div>
           </div>`,
           { className: 'custom-popup', closeButton: true, maxWidth: 240 }
         )
@@ -537,8 +727,7 @@ export const BengaluruMap: React.FC<Props> = ({
               padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 800;
               white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">${userPos.label}</div>
           </div>`,
-        iconSize: [0, 0],
-        iconAnchor: [0, 0],
+        iconSize: [0, 0], iconAnchor: [0, 0],
       });
       L.marker([userPos.lat, userPos.lng], { icon: userIcon, interactive: false, zIndexOffset: 1000 }).addTo(layer);
     }
@@ -559,13 +748,13 @@ export const BengaluruMap: React.FC<Props> = ({
               padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 800;
               white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">${dest.name}</div>
           </div>`,
-        iconSize: [32, 42],
-        iconAnchor: [16, 42],
+        iconSize: [32, 42], iconAnchor: [16, 42],
       });
       L.marker([dest.lat, dest.lng], { icon: destIcon }).addTo(layer);
     }
   }, [reports, userPos, destination]);
 
+  // Picked pin
   useEffect(() => {
     const layer = pickedLayerRef.current;
     if (!layer) return;
@@ -590,21 +779,19 @@ export const BengaluruMap: React.FC<Props> = ({
             HAZARD PICKED
           </div>
         </div>`,
-      iconSize: [44, 58],
-      iconAnchor: [22, 58],
+      iconSize: [44, 58], iconAnchor: [22, 58],
     });
     L.marker([pickedPin.lat, pickedPin.lng], { icon, zIndexOffset: 3000 }).addTo(layer);
   }, [pickedPin]);
 
+  // Focus
   useEffect(() => {
     const layer = focusLayerRef.current;
     const map = mapRef.current;
     if (!layer || !map) return;
     layer.clearLayers();
     if (!focusLocation) return;
-
     map.flyTo([focusLocation.lat, focusLocation.lng], 16, { duration: 0.8 });
-
     const icon = L.divIcon({
       className: 'custom-focus',
       html: `
@@ -620,16 +807,14 @@ export const BengaluruMap: React.FC<Props> = ({
               box-shadow: 0 3px 10px rgba(0,0,0,0.4);">${focusLocation.label}</div>
           ` : ''}
         </div>`,
-      iconSize: [0, 0],
-      iconAnchor: [0, 0],
+      iconSize: [0, 0], iconAnchor: [0, 0],
     });
     L.marker([focusLocation.lat, focusLocation.lng], { icon, zIndexOffset: 4000 }).addTo(layer);
   }, [focusLocation]);
 
-  /** Trigger the highlight — click on the "Avoided X hazards" button */
   const triggerHighlight = () => {
     if (!routeInfo || routeInfo.avoidedIds.length === 0) return;
-    setHighlightedIds([]); // reset first so the effect re-runs even if same ids
+    setHighlightedIds([]);
     requestAnimationFrame(() => setHighlightedIds(routeInfo.avoidedIds));
   };
 
@@ -643,9 +828,7 @@ export const BengaluruMap: React.FC<Props> = ({
           border-radius: 10px; padding: 0;
           box-shadow: 0 8px 24px -8px rgba(0,0,0,0.18), 0 2px 6px -2px rgba(0,0,0,0.08);
         }
-        .custom-popup .leaflet-popup-tip {
-          background: #ffffff; border: 1px solid #e2e8f0; box-shadow: none;
-        }
+        .custom-popup .leaflet-popup-tip { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: none; }
         .custom-popup .leaflet-popup-content { margin: 0; }
         .custom-popup .leaflet-popup-close-button {
           width: 22px; height: 22px; padding: 0;
@@ -660,9 +843,8 @@ export const BengaluruMap: React.FC<Props> = ({
         }
         .leaflet-control-zoom a:hover { background: #f1f5f9; }
         .leaflet-control-attribution {
-          background: rgba(255,255,255,0.9) !important;
-          color: #64748b !important; font-size: 10px !important;
-          padding: 2px 6px !important; border-radius: 6px;
+          background: rgba(255,255,255,0.9) !important; color: #64748b !important;
+          font-size: 10px !important; padding: 2px 6px !important; border-radius: 6px;
           border: 1px solid #e2e8f0;
         }
         @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
@@ -670,9 +852,14 @@ export const BengaluruMap: React.FC<Props> = ({
           0% { transform: scale(0.5); opacity: 0.9; }
           100% { transform: scale(2.2); opacity: 0; }
         }
+        @keyframes parking-pulse {
+          0%   { transform: scale(0.8); opacity: 0.85; }
+          100% { transform: scale(2.6); opacity: 0; }
+        }
+        .parking-pulse-ring { animation: parking-pulse 1.2s ease-out infinite; }
       `}</style>
 
-      {/* Route badge with clickable "Avoided X hazards" */}
+      {/* Hazard route info badge */}
       {routeInfo && rerouteActive && !hideRouteBadge && (
         <div className="absolute top-4 left-4 z-40 bg-white/95 backdrop-blur border-2 border-cyan-500/40 rounded-2xl px-5 py-4 shadow-xl min-w-[240px]">
           <div className="flex items-center gap-4">
@@ -686,17 +873,15 @@ export const BengaluruMap: React.FC<Props> = ({
               <div className="text-lg font-bold text-cyan-600">{Math.round(routeInfo.duration)} min</div>
             </div>
           </div>
-
           {routeInfo.avoided > 0 && (
             <>
-              {/* Clickable highlight trigger */}
               <button
                 type="button"
                 onClick={triggerHighlight}
                 className={`mt-3 pt-3 border-t border-slate-200 w-full flex items-center gap-2 text-left transition-all rounded-lg -mx-1 px-1 py-1 hover:bg-emerald-500/10 active:scale-[0.98] ${
                   highlightedIds.length > 0 ? 'bg-emerald-500/10' : ''
                 }`}
-                title="Click to highlight avoided hazard zones on the map"
+                title="Click to highlight avoided hazard zones"
               >
                 <div className={`w-6 h-6 rounded-full bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center shrink-0 ${
                   highlightedIds.length > 0 ? 'animate-pulse bg-emerald-500/30' : ''
@@ -704,7 +889,7 @@ export const BengaluruMap: React.FC<Props> = ({
                   <span className="text-emerald-600 text-xs font-bold">✓</span>
                 </div>
                 <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 flex-1">
-                  Avoided {routeInfo.avoided} hazard{routeInfo.avoided !== 1 ? 's' : ''} on this route
+                  Avoided {routeInfo.avoided} hazard{routeInfo.avoided !== 1 ? 's' : ''}
                 </span>
                 <span className="text-[9px] font-bold text-emerald-500/70 uppercase tracking-wider shrink-0">
                   {highlightedIds.length > 0 ? '◉ Shown' : 'Tap ▸'}
@@ -715,34 +900,58 @@ export const BengaluruMap: React.FC<Props> = ({
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-1 rounded-full" style={{ background: '#ef4444', boxShadow: '0 0 8px #ef444466' }} />
                   <span className="text-[10px] font-bold uppercase tracking-wider text-red-500">
-                    Direct route — {routeInfo.directDist.toFixed(1)} km (unsafe)
+                    Direct — {routeInfo.directDist.toFixed(1)} km
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-1 rounded-full" style={{ background: '#06b6d4', boxShadow: '0 0 8px #06b6d466' }} />
                   <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600">
-                    Safe reroute — {routeInfo.distance.toFixed(1)} km
+                    Safe — {routeInfo.distance.toFixed(1)} km
                   </span>
                 </div>
               </div>
-
-              {routeInfo.distance > routeInfo.directDist && (
-                <div className="mt-3 pt-2 border-t border-slate-200">
-                  <span className="text-[10px] text-slate-500 font-medium">
-                    +{(routeInfo.distance - routeInfo.directDist).toFixed(1)} km detour for safer journey
-                  </span>
-                </div>
-              )}
             </>
           )}
+        </div>
+      )}
 
-          {routeInfo.avoided === 0 && (
+      {/* Parking route info badge */}
+      {parkingRouteInfo && selectedParking && !hideRouteBadge && (
+        <div className="absolute top-4 left-4 z-40 bg-white/95 backdrop-blur border-2 border-emerald-500/40 rounded-2xl px-5 py-4 shadow-xl min-w-[240px]">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white font-bold text-sm shrink-0">
+              P
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Route to Parking</div>
+              <div className="text-sm font-bold text-slate-900 truncate">{selectedParking.name}</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 pt-3 border-t border-slate-200">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Distance</div>
+              <div className="text-base font-bold text-emerald-600">{parkingRouteInfo.distance.toFixed(1)} km</div>
+            </div>
+            <div className="w-px h-8 bg-slate-300" />
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">ETA</div>
+              <div className="text-base font-bold text-emerald-600">{Math.round(parkingRouteInfo.duration)} min</div>
+            </div>
+            <div className="w-px h-8 bg-slate-300" />
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Rate</div>
+              <div className="text-base font-bold text-emerald-600">₹{selectedParking.rate}/hr</div>
+            </div>
+          </div>
+
+          {parkingRouteInfo.avoided > 0 && (
             <div className="mt-3 pt-3 border-t border-slate-200 flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-slate-500/15 border border-slate-500/40 flex items-center justify-center shrink-0">
-                <span className="text-slate-600 text-xs font-bold">✓</span>
+              <div className="w-6 h-6 rounded-full bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                <span className="text-emerald-600 text-xs font-bold">✓</span>
               </div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                No hazards on direct route
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">
+                Avoiding {parkingRouteInfo.avoided} hazard{parkingRouteInfo.avoided !== 1 ? 's' : ''} on the way
               </span>
             </div>
           )}

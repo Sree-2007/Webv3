@@ -109,3 +109,24 @@ export const CREDIT_RULES = {
   rejected: -10,   // penalize misleading reports
   minPoints: 0,    // never let credits fall below this
 } as const;
+
+/* ─────────────────────────────────────────────────────────────
+   Haversine distance in km between two lat/lng points.
+   Used by the Citizen Dashboard for:
+     - "X km away" labels on each parking zone
+     - "Ambulance is X km away" toast during SOS
+   ───────────────────────────────────────────────────────────── */
+export const haversineKm = (
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+): number => {
+  const R = 6371; // Earth's mean radius in km
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};

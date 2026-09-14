@@ -5,10 +5,10 @@ import { HelpPopper } from '@/components/ui/help-popper';
 import {
   AlertTriangle, Navigation, Upload, ShieldAlert, LogOut, MapPin,
   CheckCircle2, MousePointerClick, Ambulance, X, Camera, Trash2, Sparkles, Award,
-  XCircle,
+  XCircle, ParkingCircle, Search,
 } from 'lucide-react';
-import { HazardType, computeAiTrust } from '../types';
-import { BengaluruMap, LOCATIONS, LocationKey } from '@/components/BengaluruMap';
+import { HazardType, computeAiTrust, haversineKm } from '../types';
+import { BengaluruMap, LOCATIONS, LocationKey, ParkingZone } from '@/components/BengaluruMap';
 
 const START_POSITIONS: Record<string, { lat: number; lng: number; label: string }> = {
   Ambulance: { lat: 12.9250, lng: 77.5938, label: 'Ambulance · Jayanagar' },
@@ -17,6 +17,15 @@ const START_POSITIONS: Record<string, { lat: number; lng: number; label: string 
   Cycle: { lat: 12.9180, lng: 77.6000, label: 'Your Cycle · Jayanagar' },
 };
 const DEFAULT_POS = { lat: 12.9063, lng: 77.5857, label: 'Your Location' };
+
+/* ── Seeded demo parking zones around Bengaluru ── */
+const PARKING_ZONES: ParkingZone[] = [
+  { id: 'p1', name: 'BTM 2nd Stage', lat: 12.9085, lng: 77.5910, rate: 30 },
+  { id: 'p2', name: 'Forum Mall Kora', lat: 12.9345, lng: 77.6115, rate: 40 },
+  { id: 'p3', name: 'HSR BDA Complex', lat: 12.9116, lng: 77.6380, rate: 25 },
+  { id: 'p4', name: 'Silk Board Metro', lat: 12.9160, lng: 77.6250, rate: 20 },
+  { id: 'p5', name: 'Jayanagar 4th Block', lat: 12.9250, lng: 77.5830, rate: 35 },
+];
 
 export const CitizenDashboard: React.FC = () => {
   const {
@@ -33,12 +42,17 @@ export const CitizenDashboard: React.FC = () => {
   const [photoName, setPhotoName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /* ── Parking states ── */
+  const [parkingSearchActive, setParkingSearchActive] = useState(false);
+  const [parkingHighlight, setParkingHighlight] = useState(false);
+  const [selectedParking, setSelectedParking] = useState<ParkingZone | null>(null);
+  const [parkingRateToast, setParkingRateToast] = useState<{ name: string; rate: number } | null>(null);
+
   /** Live-read credit points from the users array so we get updates from other tabs. */
   const myUser = users.find(u => u.username === currentUser?.username);
   const creditPoints = myUser?.creditPoints ?? 0;
 
-  /** Track previous credits to show a floating +15 / -10 badge.
-   *  Starts as null so we skip the initial mount and only animate real changes. */
+  /** Track previous credits to show a floating +15 / -10 badge. */
   const prevCreditsRef = useRef<number | null>(null);
   const [creditDelta, setCreditDelta] = useState<{ delta: number; key: number } | null>(null);
 
@@ -148,6 +162,37 @@ export const CitizenDashboard: React.FC = () => {
   const showSOSToast = sosAlert && sosAlert.ambulanceUser !== currentUser?.username;
   const canSubmit = pickedPin && photoDataUrl;
 
+  /* ── Parking handlers ── */
+  const handleFindParking = () => {
+    setParkingSearchActive(true);
+    setParkingHighlight(true);
+    // Pulse the markers for ~1.3s
+    setTimeout(() => setParkingHighlight(false), 1300);
+  };
+
+  const handleSelectParking = (zone: ParkingZone) => {
+    setSelectedParking(zone);
+    // Clear any conflicting hazard route
+    setDestination(null);
+    setRerouteActive(false);
+    // Show rate toast for ~1.8s
+    setParkingRateToast({ name: zone.name, rate: zone.rate });
+    setTimeout(() => setParkingRateToast(null), 1800);
+  };
+
+  const handleClearParking = () => {
+    setSelectedParking(null);
+    setParkingSearchActive(false);
+    setParkingHighlight(false);
+  };
+
+  /* Selecting a hazard destination clears the parking route */
+  const handleDestinationChange = (key: LocationKey | null) => {
+    setSelectedParking(null);
+    setDestination(key);
+    setRerouteActive(false);
+  };
+
   /* Credit badge color based on tier */
   const creditTier =
     creditPoints >= 200 ? { ring: 'ring-yellow-400/60', bg: 'bg-gradient-to-r from-yellow-500/25 to-amber-500/20', text: 'text-yellow-200', label: 'Gold' } :
@@ -171,7 +216,7 @@ export const CitizenDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
-          {/* ═══════ CREDIT POINTS PILL ═══════ */}
+          {/* CREDIT POINTS PILL */}
           <div
             className={`relative flex items-center gap-2.5 px-4 py-2.5 rounded-2xl ring-2 ${creditTier.ring} ${creditTier.bg} backdrop-blur-md shadow-lg transition-all`}
             title={`${creditTier.label} tier · Earn +15 credits per verified report, lose 10 for misleading reports`}
@@ -191,7 +236,6 @@ export const CitizenDashboard: React.FC = () => {
               · {creditTier.label}
             </span>
 
-            {/* Floating ±delta badge when credits change */}
             {creditDelta && (
               <span
                 key={creditDelta.key}
@@ -232,7 +276,7 @@ export const CitizenDashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* ─── Reward banner: brief explainer under header ─── */}
+      {/* Reward banner */}
       <div className="mb-4 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500/5 via-transparent to-transparent border border-cyan-500/15">
         <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
         <p className="text-xs text-slate-400">
@@ -244,19 +288,20 @@ export const CitizenDashboard: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1">
         <div className="space-y-6">
+          {/* ─── Route Planner ─── */}
           <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <Navigation className="w-5 h-5 text-cyan-400" /> Route Planner
             </h3>
             <label className="block text-xs font-medium text-slate-400 mb-2">Destination</label>
-            <select value={destination ?? ''} onChange={e => { setDestination((e.target.value || null) as LocationKey); setRerouteActive(false); }}
+            <select value={destination ?? ''} onChange={e => handleDestinationChange((e.target.value || null) as LocationKey)}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:ring-2 focus:ring-cyan-500 mb-4 text-sm">
               <option value="">— Select destination —</option>
               {Object.entries(LOCATIONS).filter(([k]) => k !== 'btm').map(([key, loc]) => (
                 <option key={key} value={key}>{loc.name}</option>
               ))}
             </select>
-            <button disabled={!destination} onClick={() => setRerouteActive(!rerouteActive)}
+            <button disabled={!destination} onClick={() => { setSelectedParking(null); setRerouteActive(!rerouteActive); }}
               className={`w-full py-3 rounded-xl font-bold text-sm transition-colors ${
                 !destination ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                   : rerouteActive ? 'bg-cyan-500 text-slate-950'
@@ -273,6 +318,82 @@ export const CitizenDashboard: React.FC = () => {
             )}
           </div>
 
+          {/* ─── NEW: Nearby Parking ─── */}
+          <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <ParkingCircle className="w-5 h-5 text-emerald-400" /> Nearby Parking
+            </h3>
+
+            {!parkingSearchActive ? (
+              <button
+                onClick={handleFindParking}
+                className="w-full py-3 rounded-xl font-bold text-sm transition-colors bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 flex items-center justify-center gap-2"
+              >
+                <Search className="w-4 h-4" /> Find Parking Zones Near Me
+              </button>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {PARKING_ZONES.length} zones · tap to route
+                  </p>
+                  <button
+                    onClick={handleClearParking}
+                    className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-white transition-colors"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                  {PARKING_ZONES.map(zone => {
+                    const isSelected = selectedParking?.id === zone.id;
+                    const dist = haversineKm(userPos, zone);
+                    return (
+                      <button
+                        key={zone.id}
+                        onClick={() => handleSelectParking(zone)}
+                        className={`w-full text-left p-3 rounded-xl border transition-all ${
+                          isSelected
+                            ? 'bg-emerald-500/15 border-emerald-500/50 shadow-[0_0_15px_rgba(34,197,94,0.25)]'
+                            : 'bg-slate-950 border-slate-800 hover:border-emerald-500/40 hover:bg-slate-900'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 font-bold text-sm ${
+                            isSelected ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-300'
+                          }`}>
+                            P
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 justify-between">
+                              <p className="text-sm font-semibold text-white truncate">{zone.name}</p>
+                              {isSelected && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 text-[10px]">
+                              <span className="text-emerald-400 font-bold">₹{zone.rate}/hr</span>
+                              <span className="text-slate-500">·</span>
+                              <span className="text-slate-400 font-mono">{dist.toFixed(1)} km away</span>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedParking && (
+                  <div className="mt-4 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
+                    <p className="text-[11px] text-emerald-300 flex items-center gap-1.5">
+                      <Navigation className="w-3 h-3" /> Green route to <strong>{selectedParking.name}</strong>
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ─── My Reports & Verified ─── */}
           <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 flex-1 overflow-auto max-h-[500px]">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center justify-between">
               <span>My Reports & Verified</span>
@@ -322,7 +443,8 @@ export const CitizenDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="lg:col-span-3 h-[720px] relative">
+        {/* ═══════════ MAP ═══════════ */}
+        <div className="lg:col-span-3 h-[820px] relative">
           <BengaluruMap
             signals={signals}
             reports={visibleReports.map(r => ({
@@ -339,7 +461,28 @@ export const CitizenDashboard: React.FC = () => {
             hideRouteBadge={showReportModal}
             onMapClick={showReportModal ? (lat, lng) => setPickedPin({ lat, lng }) : undefined}
             pickedPin={showReportModal ? pickedPin : null}
+            parkingZones={parkingSearchActive ? PARKING_ZONES : []}
+            parkingHighlight={parkingHighlight}
+            selectedParking={selectedParking}
           />
+
+          {/* ── Parking rate toast ── */}
+          {parkingRateToast && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] animate-parking-toast">
+              <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white rounded-2xl px-6 py-4 shadow-2xl border-2 border-emerald-300/70 flex items-center gap-4">
+                <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <ParkingCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-white/80">Selected Parking</p>
+                  <p className="text-sm font-bold mt-0.5">{parkingRateToast.name}</p>
+                  <p className="text-lg font-black mt-1 tracking-tight">
+                    RATE — ₹{parkingRateToast.rate} <span className="text-sm font-semibold opacity-90">/hr</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -352,6 +495,7 @@ export const CitizenDashboard: React.FC = () => {
             { label: 'How to report a hazard', onSelect: () => setShowReportModal(true) },
             { label: 'How reroute works' },
             { label: 'Emergency SOS guide' },
+            { label: 'Find parking near me', onSelect: () => { setParkingSearchActive(true); handleFindParking(); } },
             { label: 'How credits work', onSelect: () => setToast('+15 per verified · −10 for misleading') },
           ]}
           sections={[
@@ -497,6 +641,11 @@ export const CitizenDashboard: React.FC = () => {
           100% { transform: scale(1) translateY(0); opacity: 1; }
         }
         .animate-credit-pop { animation: credit-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+        @keyframes parking-toast {
+          from { transform: translate(-50%, -20px); opacity: 0; }
+          to   { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .animate-parking-toast { animation: parking-toast 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
       `}</style>
     </div>
   );
